@@ -383,12 +383,51 @@ rlimit-stack=4194304
 rlimit-nproc=3
 EOF
         
-        # 重启Avahi使新配置生效
-        echo "重启Avahi服务..."
-        /usr/sbin/avahi-daemon -k 2>/dev/null || true
-        sleep 2
-        /usr/sbin/avahi-daemon -D
-        sleep 2
+        # 使用更可靠的方式重启Avahi
+        echo "更新Avahi配置..."
+        
+        # 首先检查Avahi是否在运行
+        if pgrep avahi-daemon >/dev/null; then
+            echo "Avahi正在运行，尝试优雅停止..."
+            # 尝试使用-k选项停止，但不等待返回值
+            /usr/sbin/avahi-daemon -k >/dev/null 2>&1 &
+            stop_pid=$!
+            
+            # 等待最多3秒
+            timeout=3
+            while pgrep avahi-daemon >/dev/null && [ $timeout -gt 0 ]; do
+                sleep 1
+                timeout=$((timeout-1))
+            done
+            
+            # 如果进程仍在运行，强制终止它
+            if pgrep avahi-daemon >/dev/null; then
+                echo "Avahi优雅停止超时，使用强制方法..."
+                killall -9 avahi-daemon 2>/dev/null || true
+                sleep 1
+            fi
+        fi
+        
+        # 现在启动Avahi，使用后台方式
+        echo "启动Avahi服务（使用改进的方法）..."
+        # 使用nohup启动，完全分离子进程
+        nohup /usr/sbin/avahi-daemon -D >/dev/null 2>&1 &
+        
+        # 等待它启动并检查状态
+        sleep 3
+        if pgrep avahi-daemon >/dev/null; then
+            echo "Avahi服务成功启动"
+        else
+            echo "Avahi启动可能失败，尝试备用方法..."
+            /usr/sbin/avahi-daemon -D --no-chroot >/dev/null 2>&1 &
+            sleep 2
+            if pgrep avahi-daemon >/dev/null; then
+                echo "Avahi使用备用方法成功启动"
+            else
+                echo "警告: 无法重启Avahi服务，AirPrint可能无法工作"
+            fi
+        fi
+        
     else
         echo "未找到Avahi配置文件，使用默认设置"
     fi
@@ -396,7 +435,9 @@ EOF
     # 尝试安装avahi-browse工具
     if ! command -v avahi-browse > /dev/null; then
         echo "找不到avahi-browse命令，尝试安装..."
-        apt-get update -y && apt-get install -y --no-install-recommends avahi-utils 2>/dev/null || echo "安装avahi-utils失败，但继续..."
+        # 使用静默方式安装，避免不必要的错误输出
+        apt-get update -qq 2>/dev/null || true
+        apt-get install -y --no-install-recommends avahi-utils 2>/dev/null || echo "安装avahi-utils失败，但继续..."
     fi
     
     # 确保CUPS与Avahi集成
@@ -405,42 +446,56 @@ EOF
     # 检查cups-browsed服务
     if command -v cups-browsed > /dev/null; then
         echo "启动cups-browsed服务..."
-        cups-browsed || echo "cups-browsed启动失败，但继续..."
+        # 以非阻塞方式启动
+        cups-browsed 2>/dev/null &
+        # 不检查退出状态，继续执行
     else
         echo "未找到cups-browsed，尝试安装..."
-        apt-get update -y && apt-get install -y --no-install-recommends cups-browsed 2>/dev/null || echo "安装cups-browsed失败，但继续..."
+        apt-get update -qq 2>/dev/null || true
+        apt-get install -y --no-install-recommends cups-browsed 2>/dev/null || echo "安装cups-browsed失败，但继续..."
         
         if command -v cups-browsed > /dev/null; then
             echo "启动cups-browsed服务..."
-            cups-browsed || echo "cups-browsed启动失败，但继续..."
+            cups-browsed 2>/dev/null &
         fi
     fi
     
     # 尝试使用avahi-browse显示已发布的服务
     if command -v avahi-browse > /dev/null; then
         echo "发布的mDNS服务:"
-        AVAHI_BROWSE_OUTPUT=$(avahi-browse -a -t 2>/dev/null)
+        AVAHI_BROWSE_OUTPUT=$(timeout 5 avahi-browse -a -t 2>/dev/null || echo "")
         if [ -n "$AVAHI_BROWSE_OUTPUT" ]; then
             echo "$AVAHI_BROWSE_OUTPUT"
         else
-            echo "未检测到任何mDNS服务，可能需要等待打印机配置完成"
-            # 强制发布一个测试服务
+            echo "未检测到任何mDNS服务，尝试手动发布打印机..."
+            
+            # 添加sleep以确保系统服务稳定
+            sleep 2
+            
+            # 强制发布测试服务和当前打印机
             if command -v avahi-publish > /dev/null; then
-                echo "尝试发布测试服务..."
-                avahi-publish -s "CUPS-Test-Service" _ipp._tcp 631 "printer=test" &
+                # 发布测试服务（后台）
+                echo "发布AirPrint测试服务..."
+                nohup avahi-publish -s "CUPS-Printer-Service" _ipp._tcp 631 "printer=test" "pdl=application/postscript" "note=AirPrint" >/dev/null 2>&1 &
                 
-                # 检查是否有任何打印机，并手动创建DNS-SD服务
+                # 检查是否有配置的打印机
                 if lpstat -v 2>/dev/null | grep -q printer; then
-                    echo "发现打印机，手动发布Bonjour服务..."
-                    lpstat -v | awk -F ":" '{print $1}' | awk '{print $NF}' | while read printer; do
-                        echo "为打印机 $printer 发布Bonjour服务..."
-                        avahi-publish -s "$printer" _ipp._tcp 631 "printer=$printer" "pdl=application/postscript" "note=AirPrint" &
+                    echo "发现打印机，发布为Bonjour服务..."
+                    # 对每个打印机创建一个单独的服务发布进程
+                    lpstat -v 2>/dev/null | awk -F ":" '{print $1}' | awk '{print $NF}' | while read printer; do
+                        echo "为打印机 '$printer' 发布AirPrint服务..."
+                        # 不使用wait避免阻塞脚本
+                        nohup avahi-publish -s "${printer}" _ipp._tcp 631 "printer=${printer}" "product=(HP Color LaserJet)" "pdl=application/pdf,application/postscript" "note=AirPrint Printer" "txtvers=1" "ty=HP Color LaserJet" "priority=60" "usb_MFG=HP" >/dev/null 2>&1 &
                     done
+                else
+                    echo "没有找到已配置的打印机，只发布测试服务"
                 fi
+            else
+                echo "找不到avahi-publish命令，无法手动发布服务"
             fi
         fi
     else
-        echo "仍然找不到avahi-browse命令，无法列出mDNS服务"
+        echo "找不到avahi-browse命令，跳过服务检查"
     fi
 else
     echo "警告: Avahi daemon 未运行，AirPrint将不可用"
@@ -465,6 +520,12 @@ echo "2. 安装HPLIP插件: /opt/hp/setup-hplip-plugin.sh"
 echo "3. 检查USB打印机: lsusb | grep -i hp"
 echo "4. 配置打印机: hp-setup -i 或使用 /opt/scripts/setup-printer.sh"
 echo "5. 或访问Web界面: http://[容器IP]:631"
+echo ""
+echo "在iPhone上使用AirPrint:"
+echo "- 配置打印机后，重启容器确保AirPrint服务正确发布"
+echo "- 打开照片或文档，点击分享图标，然后选择'打印'"
+echo "- 如果看不到打印机，请检查iPhone是否与打印机在同一网络"
+echo "- 确保防火墙允许UDP 5353和TCP 631端口"
 echo "================================================="
 
 # 保持容器运行
