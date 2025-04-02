@@ -1,0 +1,16 @@
+# CUPS配置和数据目录
+config/
+spool/
+
+# Docker相关
+.env
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo 

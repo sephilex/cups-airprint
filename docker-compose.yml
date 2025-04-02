@@ -1,0 +1,20 @@
+version: '3'
+
+services:
+  cups-airprint:
+    build: .
+    container_name: cups-airprint
+    restart: unless-stopped
+    ports:
+      - "631:631/tcp"    # CUPS Web界面和打印服务
+      - "5353:5353/udp"  # Avahi/Bonjour服务发现
+    volumes:
+      - ./config:/etc/cups  # CUPS配置持久化
+      - ./spool:/var/spool/cups  # 打印队列持久化
+    devices:
+      - /dev/bus/usb:/dev/bus/usb  # USB设备直通
+    environment:
+      - TZ=Asia/Shanghai  # 时区设置
+    # 确保网络托管模式支持mDNS(Bonjour)
+    network_mode: "host"  # 或使用bridge，但需要额外配置mDNS转发
+    privileged: true  # 需要特权模式才能访问USB设备 
