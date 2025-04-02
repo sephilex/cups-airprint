@@ -3,6 +3,14 @@ FROM debian:bookworm-slim
 # 避免安装过程中的交互式提示
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 添加中文支持
+RUN apt-get update && apt-get install -y locales
+RUN echo "zh_CN.UTF-8 UTF-8" >> /etc/locale.gen && \
+    locale-gen && \
+    update-locale LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8
+ENV LANG=zh_CN.UTF-8
+ENV LC_ALL=zh_CN.UTF-8
+
 # 更新软件包并安装必要的工具
 RUN apt-get update && apt-get install -y \
     cups \
@@ -28,6 +36,7 @@ RUN apt-get update && apt-get install -y \
     coreutils \
     procps \
     vim \
+    nano \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
