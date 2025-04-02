@@ -58,29 +58,36 @@ export PLUGIN_INSTALL=1
 
 # 直接复制插件文件到正确的位置
 echo "手动安装插件文件..."
-if [ -d "$TEMP_DIR/plugin_install" ]; then
-    # 根据系统架构选择正确的插件目录
-    ARCH=$(uname -m)
-    if [ "$ARCH" = "x86_64" ]; then
-        PLUGIN_DIR=x86_64
-    elif [ "$ARCH" = "aarch64" ]; then
-        PLUGIN_DIR=aarch64
-    elif [[ "$ARCH" == arm* ]]; then
-        PLUGIN_DIR=arm
-    elif [ "$ARCH" = "i686" ] || [ "$ARCH" = "i386" ]; then
-        PLUGIN_DIR=x86_32
-    else
-        echo "无法识别的架构: $ARCH，尝试使用默认插件"
-        PLUGIN_DIR=x86_64
+# 创建目标目录
+mkdir -p /usr/share/hplip/data/firmware
+mkdir -p /usr/share/hplip/data/plugins
+mkdir -p /usr/share/hplip/prnt/plugins
+
+# 根据系统架构选择正确的插件目录
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    PLUGIN_DIR=x86_64
+elif [ "$ARCH" = "aarch64" ]; then
+    PLUGIN_DIR=aarch64
+elif [[ "$ARCH" == arm* ]]; then
+    PLUGIN_DIR=arm
+    if [ "$ARCH" = "armv7l" ]; then
+        PLUGIN_DIR=arm32
     fi
-    
-    # 创建目标目录
-    mkdir -p /usr/share/hplip/data/firmware
-    mkdir -p /usr/share/hplip/data/plugins
-    mkdir -p /usr/share/hplip/prnt/plugins
+elif [ "$ARCH" = "i686" ] || [ "$ARCH" = "i386" ]; then
+    PLUGIN_DIR=x86_32
+else
+    echo "无法识别的架构: $ARCH，尝试使用默认插件"
+    PLUGIN_DIR=x86_64
+fi
+
+echo "系统架构: $ARCH, 使用插件目录: $PLUGIN_DIR"
+
+# 首先检查传统目录结构
+if [ -d "$TEMP_DIR/plugin_install" ]; then
+    echo "使用传统目录结构安装插件..."
     
     # 复制插件文件
-    echo "复制插件文件到系统目录..."
     if [ -d "$TEMP_DIR/plugin_install/data/firmware" ]; then
         cp -v "$TEMP_DIR"/plugin_install/data/firmware/* /usr/share/hplip/data/firmware/ || echo "复制firmware文件失败，但继续..."
     fi
@@ -101,16 +108,47 @@ if [ -d "$TEMP_DIR/plugin_install" ]; then
             fi
         done
     fi
+else
+    # 新的目录结构 - 文件直接在提取目录中
+    echo "使用新的目录结构安装插件..."
     
-    # 设置权限
-    chmod -R 755 /usr/share/hplip/data/firmware
-    chmod -R 755 /usr/share/hplip/data/plugins
-    chmod -R 755 /usr/share/hplip/prnt/plugins
+    # 复制固件文件
+    for fw in "$TEMP_DIR"/*.fw.gz; do
+        if [ -f "$fw" ]; then
+            cp -v "$fw" /usr/share/hplip/data/firmware/ || echo "复制固件文件失败，但继续..."
+        fi
+    done
     
+    # 复制架构特定的插件文件
+    for plugin in "$TEMP_DIR"/*-"$PLUGIN_DIR".so; do
+        if [ -f "$plugin" ]; then
+            cp -v "$plugin" /usr/share/hplip/prnt/plugins/ || echo "复制插件文件失败，但继续..."
+        fi
+    done
+    
+    # 如果没有找到架构特定的插件，尝试查找任何可能的匹配
+    if [ ! "$(ls -A /usr/share/hplip/prnt/plugins/)" ]; then
+        echo "未找到架构特定插件，尝试复制所有可能的插件..."
+        for plugin_pattern in "arm" "arm32" "arm64" "x86_32" "x86_64"; do
+            for plugin in "$TEMP_DIR"/*-"$plugin_pattern".so; do
+                if [ -f "$plugin" ]; then
+                    cp -v "$plugin" /usr/share/hplip/prnt/plugins/ || echo "复制备选插件文件失败，但继续..."
+                fi
+            done
+        done
+    fi
+fi
+
+# 设置权限
+chmod -R 755 /usr/share/hplip/data/firmware
+chmod -R 755 /usr/share/hplip/data/plugins
+chmod -R 755 /usr/share/hplip/prnt/plugins
+
+# 检查是否成功
+if [ "$(ls -A /usr/share/hplip/prnt/plugins/)" ]; then
     echo "HPLIP插件文件安装完成"
 else
-    echo "错误: 插件提取目录不存在，安装失败"
-    exit 1
+    echo "警告: 未能复制任何插件文件，安装可能不完整"
 fi
 
 # 清理
