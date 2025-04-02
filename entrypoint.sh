@@ -8,6 +8,14 @@ rm -f /run/dbus/pid
 rm -f /run/avahi-daemon/pid
 rm -f /var/run/avahi-daemon/pid
 
+# 清理可能存在的HPLIP锁文件
+echo "清理HPLIP锁文件..."
+rm -f /var/hp-setup.lock
+rm -f /var/hp-plugin.lock
+rm -f /var/lib/hp/hplip.lock
+rm -f ~/.hplip/hplip.lock
+rm -f /tmp/hp-setup.lock
+
 # 创建必要的目录
 mkdir -p /var/run/dbus
 mkdir -p /run/dbus
@@ -119,6 +127,12 @@ if [ ! -f /etc/cups/printers.conf ]; then
   # 验证CUPS是否正常运行
   echo "验证CUPS状态..."
   lpstat -t || echo "CUPS可能未完全启动，但将继续..."
+  
+  # 清理锁文件
+  echo "再次清理锁文件，确保hp-setup可以运行..."
+  rm -f /var/hp-setup.lock
+  rm -f /var/lib/hp/hplip.lock
+  rm -f ~/.hplip/hplip.lock
   
   # 列出可用设备
   echo "列出可用打印设备..."

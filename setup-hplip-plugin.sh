@@ -7,6 +7,13 @@ PLUGIN_PATH="/tmp/hplip-plugin.run"
 
 echo "准备下载并安装HPLIP插件..."
 
+# 清除可能存在的锁文件
+echo "清理可能存在的锁文件..."
+rm -f /var/hp-plugin.lock
+rm -f /var/lib/hp/hplip.lock
+rm -f ~/.hplip/hplip.lock
+rm -f /tmp/hp-plugin.lock
+
 # 检查HPLIP是否正常安装
 echo "检查HPLIP安装状态..."
 hp-doctor -i || echo "hp-doctor错误，但将继续"
@@ -51,7 +58,10 @@ EOF
 echo "安装HPLIP插件..."
 cat /tmp/plugin_answers.txt | sh "$PLUGIN_PATH" || { echo "HPLIP插件安装失败，但将继续..."; }
 
-echo "清理临时文件..."
+echo "清理临时文件和锁文件..."
 rm -f "$PLUGIN_PATH" /tmp/plugin_answers.txt /tmp/hp-plugin-output.txt
+rm -f /var/hp-plugin.lock
+rm -f /var/lib/hp/hplip.lock
+rm -f ~/.hplip/hplip.lock
 
 echo "HPLIP插件安装完成" 
