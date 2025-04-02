@@ -28,7 +28,6 @@ RUN apt-get update && apt-get install -y \
     coreutils \
     procps \
     vim \
-    timeout \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
