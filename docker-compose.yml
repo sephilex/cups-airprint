@@ -16,5 +16,12 @@ services:
     environment:
       - TZ=Asia/Shanghai  # 时区设置
     # 确保网络托管模式支持mDNS(Bonjour)
-    network_mode: "host"  # 或使用bridge，但需要额外配置mDNS转发
-    privileged: true  # 需要特权模式才能访问USB设备 
+    network_mode: "host"  # 使用host网络模式以支持mDNS广播
+    privileged: true  # 需要特权模式才能访问USB设备
+    # 添加健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:631"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s 

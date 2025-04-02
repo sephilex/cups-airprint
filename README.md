@@ -4,12 +4,13 @@
 
 ## 功能特点
 
-- 基于Debian的轻量级容器
+- 基于Debian Bookworm的轻量级容器
 - 预装CUPS打印服务器
-- 集成HPLIP驱动和插件支持
+- 集成HPLIP 3.25.2驱动和最新插件支持
 - 支持AirPrint/Bonjour，可从iOS和macOS设备直接打印
 - USB设备直通支持
 - 持久化配置存储
+- 自动清理PID文件，解决容器重启问题
 
 ## 系统要求
 
@@ -37,7 +38,17 @@ opkg install docker dockerd docker-compose
 /etc/init.d/dockerd start
 ```
 
-3. 克隆或下载此仓库到您的OpenWrt设备
+3. 下载此仓库到您的OpenWrt设备：
+
+```bash
+mkdir -p /root/cups-airprint
+cd /root
+wget -O cups-airprint.zip https://github.com/sephilex/cups-airprint/archive/refs/heads/main.zip
+unzip cups-airprint.zip -d /tmp
+cp -r /tmp/cups-airprint-main/* /root/cups-airprint/
+rm cups-airprint.zip
+rm -rf /tmp/cups-airprint-main
+```
 
 ### 部署容器
 
@@ -57,6 +68,11 @@ docker-compose up -d
 ```
 
 4. 初始启动可能需要几分钟，因为需要下载和安装HP插件
+5. 使用以下命令查看容器日志：
+
+```bash
+docker logs -f cups-airprint
+```
 
 ## 配置打印机
 
@@ -64,13 +80,18 @@ docker-compose up -d
 
 1. 访问CUPS Web界面：`http://[您的OpenWrt设备IP]:631`
 
-2. 导航到"Administration" > "Add Printer"
+2. 使用以下登录凭据（如需要）：
+   - 用户名：root
+   - 密码：（默认无密码）
 
-3. 系统应该已经自动检测到您的HP CP1025打印机。如果没有自动检测到：
-   - 选择"Local Printers" > "HP Color LaserJet cp1025 (HP Color LaserJet cp1025)"
+3. 导航到"Administration" > "Add Printer"
+
+4. 系统应该已经自动检测到您的HP CP1025打印机。如果没有自动检测到：
+   - 选择"Local Printers" > "HP Color LaserJet cp1025"
+   - 推荐选择 **HP LaserJet cp1025, hpcups 3.21.2, requires proprietary plugin** 驱动
    - 按提示完成配置
 
-4. 确保在打印机设置中启用了"Share This Printer"选项
+5. 确保在打印机设置中启用了"Share This Printer"选项
 
 ### 通过命令行配置
 
@@ -144,11 +165,29 @@ docker logs cups-airprint
 docker-compose restart
 ```
 
+3. 如果容器卡在下载HPLIP插件阶段，您可以手动下载插件并复制到容器中：
+```bash
+# 在您的macOS上下载插件
+wget https://www.openprinting.org/download/printdriver/auxfiles/HP/plugins/hplip-3.25.2-plugin.run
+
+# 将插件复制到OpenWrt
+scp hplip-3.25.2-plugin.run root@<OpenWrt设备IP>:/tmp/
+
+# 将插件复制到容器
+docker cp /tmp/hplip-3.25.2-plugin.run cups-airprint:/tmp/hplip-plugin.run
+
+# 在容器内运行安装
+docker exec -it cups-airprint bash
+chmod +x /tmp/hplip-plugin.run
+sh /tmp/hplip-plugin.run
+```
+
 ## 注意事项
 
 - 网络模式设置为"host"以支持Bonjour/mDNS服务发现
 - 容器需要特权模式才能访问USB设备
 - 如果遇到权限问题，请检查USB设备权限
+- 本容器基于Debian Bookworm，使用最新的CUPS和HPLIP驱动
 
 ## 许可
 

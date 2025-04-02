@@ -1,11 +1,25 @@
 #!/bin/bash
 set -e
 
-# 启动dbus服务
+# 清理旧的PID文件
+echo "清理旧的PID文件..."
+rm -f /var/run/dbus/pid
+rm -f /run/dbus/pid
+rm -f /run/avahi-daemon/pid
+rm -f /var/run/avahi-daemon/pid
+
+# 创建必要的目录
 mkdir -p /var/run/dbus
+mkdir -p /run/dbus
+mkdir -p /run/avahi-daemon
+mkdir -p /var/run/avahi-daemon
+
+# 启动dbus服务
+echo "启动dbus服务..."
 dbus-daemon --system || true
 
 # 启动avahi服务（用于AirPrint发现）
+echo "启动avahi服务..."
 service avahi-daemon start || echo "Avahi daemon failed to start, but continuing..."
 
 # 配置CUPS，允许远程访问
@@ -74,20 +88,29 @@ DefaultEncryption Never
 EOF
 
 # 启动CUPS服务
+echo "启动CUPS服务..."
 /usr/sbin/cupsd -f &
+
+# 等待CUPS完全启动
+echo "等待CUPS服务启动..."
+sleep 5
 
 # 如果是首次运行，配置打印机
 if [ ! -f /etc/cups/printers.conf ]; then
-  echo "首次运行，等待CUPS启动后配置HP CP1025打印机..."
-  sleep 5
+  echo "首次运行，配置HP CP1025打印机..."
   
   # 运行HPLIP插件安装脚本
   /opt/hp/setup-hplip-plugin.sh
   
+  # 添加10秒延迟，确保CUPS完全启动
+  sleep 10
+  
   # 自动配置打印机（假设USB连接的是HP CP1025）
+  echo "尝试自动配置打印机..."
   hp-setup -i --auto
   
   # 启用打印机共享
+  echo "配置打印机共享..."
   lpadmin -p CP1025 -o printer-is-shared=true || echo "未能自动找到打印机，请手动配置"
   
   # 启用AirPrint

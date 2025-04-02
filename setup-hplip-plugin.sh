@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-PLUGIN_VERSION="3.21.12"
-PLUGIN_URL="https://developers.hp.com/sites/default/files/hplip-${PLUGIN_VERSION}-plugin.run"
+PLUGIN_VERSION="3.25.2"
+PLUGIN_URL="https://www.openprinting.org/download/printdriver/auxfiles/HP/plugins/hplip-${PLUGIN_VERSION}-plugin.run"
 PLUGIN_PATH="/tmp/hplip-plugin.run"
 
 echo "准备下载并安装HPLIP插件..."
@@ -14,10 +14,10 @@ if hp-plugin -i 2>&1 | grep -q "Plugin is installed"; then
 fi
 
 # 下载插件
-echo "下载HPLIP插件..."
+echo "下载HPLIP插件 ${PLUGIN_VERSION}..."
 if ! wget -q -O "$PLUGIN_PATH" "$PLUGIN_URL"; then
     echo "插件下载失败，尝试使用备用链接..."
-    PLUGIN_URL="https://www.openprinting.org/download/printdriver/auxfiles/HP/plugins/hplip-${PLUGIN_VERSION}-plugin.run"
+    PLUGIN_URL="https://developers.hp.com/sites/default/files/hplip-${PLUGIN_VERSION}-plugin.run"
     wget -q -O "$PLUGIN_PATH" "$PLUGIN_URL" || { echo "无法下载HPLIP插件"; exit 1; }
 fi
 
