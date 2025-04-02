@@ -11,6 +11,8 @@ services:
     volumes:
       - ./config:/etc/cups  # CUPS配置持久化
       - ./spool:/var/spool/cups  # 打印队列持久化
+      - ./setup-hplip-plugin.sh:/opt/hp/setup-hplip-plugin.sh  # 脚本直接挂载
+      - ./scripts:/opt/scripts  # 其他脚本目录
     devices:
       - /dev/bus/usb:/dev/bus/usb  # USB设备直通
     environment:

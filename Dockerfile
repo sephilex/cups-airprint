@@ -4,34 +4,30 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 添加中文支持
-RUN apt-get update && apt-get install -y locales
-RUN echo "zh_CN.UTF-8 UTF-8" >> /etc/locale.gen && \
+RUN apt-get update && apt-get install -y locales && \
+    echo "zh_CN.UTF-8 UTF-8" >> /etc/locale.gen && \
     locale-gen && \
-    update-locale LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8
+    update-locale LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+    
 ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
 
-# 更新软件包并安装必要的工具
+# 更新软件包并安装必要的工具 - 使用多行提高缓存利用率
+# 首先安装基本工具
 RUN apt-get update && apt-get install -y \
     cups \
     cups-client \
     cups-filters \
     cups-pdf \
     cups-bsd \
-    printer-driver-all \
-    hplip \
-    hplip-gui \
-    hplip-data \
+    dbus \
     avahi-daemon \
     avahi-discover \
     libnss-mdns \
-    dbus \
-    python3-minimal \
-    python3-pip \
     usbutils \
     wget \
-    iproute2 \
-    iputils-ping \
     curl \
     coreutils \
     procps \
@@ -40,17 +36,27 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装HPLIP的插件
-RUN mkdir -p /opt/hp/
-COPY setup-hplip-plugin.sh /opt/hp/
-RUN chmod +x /opt/hp/setup-hplip-plugin.sh
+# 然后安装HP相关工具（单独一层方便以后替换）
+RUN apt-get update && apt-get install -y \
+    hplip \
+    hplip-gui \
+    hplip-data \
+    printer-driver-all \
+    python3-minimal \
+    python3-pip \
+    iproute2 \
+    iputils-ping \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# 创建CUPS配置目录并设置权限
-RUN mkdir -p /etc/cups
-RUN mkdir -p /var/run/dbus
-RUN mkdir -p /run/dbus
-RUN mkdir -p /run/avahi-daemon
-RUN mkdir -p /var/run/avahi-daemon
+# 创建目录结构（分层优化）
+RUN mkdir -p /etc/cups \
+    /var/run/dbus \
+    /run/dbus \
+    /run/avahi-daemon \
+    /var/run/avahi-daemon \
+    /opt/hp \
+    /opt/scripts
 
 # 配置CUPS允许远程访问
 RUN echo "ServerAlias *" >> /etc/cups/cupsd.conf && \
@@ -63,5 +69,7 @@ EXPOSE 5353/udp
 # 创建启动脚本
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# 注意：setup-hplip-plugin.sh现在通过卷挂载，不再直接复制到镜像中
 
 ENTRYPOINT ["/entrypoint.sh"] 
