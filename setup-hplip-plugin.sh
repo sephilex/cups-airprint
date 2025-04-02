@@ -20,8 +20,11 @@ hp-info -v || echo "hp-info命令失败，但将继续..."
 # 检查系统中已安装的HPLIP版本
 INSTALLED_VERSION=$(dpkg -l hplip | grep hplip | awk '{print $3}' | cut -d- -f1)
 if [ -n "$INSTALLED_VERSION" ]; then
-    echo "检测到已安装的HPLIP版本: $INSTALLED_VERSION"
-    PLUGIN_VERSION=$INSTALLED_VERSION
+    echo "检测到已安装的HPLIP版本（带包后缀）: $INSTALLED_VERSION"
+    # 去除Debian包后缀(+dfsg0)
+    CLEAN_VERSION=$(echo $INSTALLED_VERSION | sed 's/+dfsg[0-9]*$//')
+    echo "清理后的HPLIP版本: $CLEAN_VERSION"
+    PLUGIN_VERSION=$CLEAN_VERSION
     echo "将插件版本调整为: $PLUGIN_VERSION"
 fi
 
