@@ -528,12 +528,83 @@ echo "- 如果看不到打印机，请检查iPhone是否与打印机在同一网
 echo "- 确保防火墙允许UDP 5353和TCP 631端口"
 echo "================================================="
 
-# 保持容器运行
-if [ "$CUPS_RUNNING" = true ] && [ -n "$CUPSD_PID" ]; then
-    echo "监控CUPS进程状态..."
-    wait $CUPSD_PID || echo "CUPS进程已终止，容器将继续运行"
-fi
-
 # 即使CUPS服务失败，也保持容器运行以便于调试
 echo "容器将保持运行以便进行故障排除..."
+
+# 针对AirPrint服务检测的最终检查
+echo "执行最终AirPrint服务检查..."
+if pgrep avahi-daemon > /dev/null && pgrep cupsd > /dev/null; then
+    echo "CUPS和Avahi服务都在运行"
+    
+    # 检查打印机是否已配置
+    if lpstat -v 2>/dev/null | grep -q printer; then
+        echo "发现已配置的打印机，确保它们发布为AirPrint服务..."
+        
+        # 强制重启Avahi以确保服务发现正常工作
+        echo "强制重启Avahi以刷新mDNS缓存..."
+        killall -9 avahi-daemon 2>/dev/null || true
+        sleep 2
+        nohup /usr/sbin/avahi-daemon -D >/dev/null 2>&1 &
+        sleep 3
+        
+        # 确保CUPS配置文件正确
+        echo "再次检查CUPS配置..."
+        grep -q "BrowseLocalProtocols dnssd" /etc/cups/cupsd.conf || \
+            echo "BrowseLocalProtocols dnssd" >> /etc/cups/cupsd.conf
+        grep -q "Browsing On" /etc/cups/cupsd.conf || \
+            echo "Browsing On" >> /etc/cups/cupsd.conf
+        
+        # 检查cups.sock权限
+        for socket_path in "/var/run/cups/cups.sock" "/run/cups/cups.sock"; do
+            if [ -S "$socket_path" ]; then
+                echo "设置$socket_path权限为777..."
+                chmod 777 "$socket_path" 2>/dev/null || true
+            fi
+        done
+        
+        # 强制为所有打印机启用共享
+        echo "强制为所有打印机启用共享..."
+        lpstat -v 2>/dev/null | awk -F ":" '{print $1}' | awk '{print $NF}' | while read printer; do
+            if [ -n "$printer" ] && [ "$printer" != "的设备：usb" ]; then
+                echo "确保打印机 '$printer' 已启用并共享..."
+                cupsenable "$printer" 2>/dev/null || true
+                lpadmin -p "$printer" -o printer-is-shared=true 2>/dev/null || true
+                
+                # 手动发布此打印机
+                if command -v avahi-publish > /dev/null; then
+                    echo "手动发布打印机 '$printer' 为AirPrint服务..."
+                    nohup avahi-publish -s "${printer}" _ipp._tcp 631 "printer=${printer}" \
+                        "product=(HP Color LaserJet)" \
+                        "pdl=application/pdf,application/postscript" \
+                        "note=AirPrint Printer" \
+                        "txtvers=1" \
+                        "ty=HP Color LaserJet" \
+                        "priority=60" \
+                        "usb_MFG=HP" \
+                        "rp=printers/${printer}" \
+                        "URF=none" \
+                        "adminurl=http://$(hostname):631/printers/${printer}" \
+                        >/dev/null 2>&1 &
+                fi
+            fi
+        done
+        
+        echo "AirPrint配置和服务发布已完成。如果iPhone仍无法发现打印机，请使用以下命令检查:"
+        echo "1. docker exec -it cups-airprint avahi-browse -at _ipp._tcp"
+        echo "2. docker exec -it cups-airprint netstat -tulpn | grep '631\\|5353'"
+    else
+        echo "未发现已配置的打印机，请先配置打印机"
+        echo "可通过Web界面或使用hp-setup命令配置打印机"
+    fi
+else
+    echo "警告: 一个或多个关键服务未运行"
+    if ! pgrep cupsd > /dev/null; then
+        echo "CUPS服务未运行，请在容器内执行: /usr/sbin/cupsd"
+    fi
+    if ! pgrep avahi-daemon > /dev/null; then
+        echo "Avahi服务未运行，请在容器内执行: /usr/sbin/avahi-daemon -D"
+    fi
+fi
+
+# 保持容器运行
 tail -f /dev/null 
