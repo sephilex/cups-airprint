@@ -75,9 +75,10 @@ DefaultEncryption Never
 
 # 启用Bonjour/AirPrint服务发现
 BrowseLocalProtocols dnssd
-BrowseRemoteProtocols dnssd
-BrowseWebIF Yes
-BrowseAddress @LOCAL
+# 注意：以下指令在某些CUPS版本中不受支持，已注释掉
+# BrowseRemoteProtocols dnssd
+# BrowseWebIF Yes
+# BrowseAddress @LOCAL
 
 # 设置网络访问权限
 <Location />
@@ -134,8 +135,6 @@ BrowseAddress @LOCAL
 </Policy>
 EOF
 
-# 启动CUPS服务
-echo "启动CUPS服务..."
 # 首先检查CUPS配置是否有效
 /usr/sbin/cupsd -t
 if [ $? -ne 0 ]; then
@@ -149,7 +148,6 @@ Port 631
 Listen /run/cups/cups.sock
 ServerAlias *
 DefaultEncryption Never
-BrowseLocalProtocols dnssd
 <Location />
   Order allow,deny
   Allow all
@@ -168,20 +166,34 @@ fi
 # 确保CUPS目录存在且权限正确
 mkdir -p /var/spool/cups/tmp
 mkdir -p /run/cups
+mkdir -p /var/log/cups
+touch /var/log/cups/access_log
+touch /var/log/cups/error_log
 chmod -R 755 /var/spool/cups
 chmod -R 755 /etc/cups
 chmod -R 755 /run/cups
+chmod -R 755 /var/log/cups
+
+# 创建CUPS客户端配置
+echo "# CUPS客户端配置" > /etc/cups/client.conf
+echo "ServerName localhost" >> /etc/cups/client.conf
 
 # 启动CUPS
+echo "尝试启动CUPS（后台模式）..."
 /usr/sbin/cupsd
 sleep 3
+
 # 检查CUPS是否运行
 if pgrep cupsd > /dev/null; then
     echo "CUPS服务成功启动"
     CUPS_RUNNING=true
 else
     echo "CUPS服务启动失败，尝试直接前台运行..."
-    /usr/sbin/cupsd -f &
+    # 先确保没有其他实例在运行
+    killall -9 cupsd 2>/dev/null || true
+    sleep 1
+    # 尝试前台模式
+    /usr/sbin/cupsd -f -c /etc/cups/cupsd.conf &
     CUPSD_PID=$!
     sleep 5
     # 再次检查
@@ -198,22 +210,40 @@ fi
 echo "等待CUPS服务完全初始化..."
 sleep 5
 
+# 修复/var/run/cups/cups.sock权限
+if [ -S /var/run/cups/cups.sock ] || [ -S /run/cups/cups.sock ]; then
+    echo "发现CUPS套接字，确保正确权限..."
+    chmod 777 /var/run/cups/cups.sock 2>/dev/null || true
+    chmod 777 /run/cups/cups.sock 2>/dev/null || true
+else
+    echo "警告: 未找到CUPS套接字，这可能导致客户端工具连接失败"
+fi
+
 # 启用AirPrint基本设置
 echo "配置AirPrint基本设置..."
 if [ "$CUPS_RUNNING" = true ]; then
     # 使用curl测试CUPS是否响应
     if curl -s --connect-timeout 3 http://localhost:631/ > /dev/null; then
         echo "CUPS已响应，应用AirPrint设置..."
-        /usr/sbin/cupsctl --share-printers || echo "cupsctl设置共享打印机失败"
-        /usr/sbin/cupsctl --remote-any || echo "cupsctl设置远程访问失败"
-        /usr/sbin/cupsctl --remote-admin || echo "cupsctl设置远程管理失败"
+        # 直接使用lpadmin命令替代cupsctl
+        echo "使用替代方法配置CUPS共享设置..."
         
-        # 确保所有打印机都启用了共享
+        # 设置共享选项
+        lpadmin -o printer-is-shared=true || echo "设置默认共享选项失败"
+        
+        # 为所有打印机启用共享
         echo "确保所有打印机都启用了共享..."
         lpstat -v 2>/dev/null | awk -F ":" '{print $1}' | awk '{print $NF}' | while read printer; do
             echo "设置打印机 $printer 为共享..."
             lpadmin -p "$printer" -o printer-is-shared=true || echo "设置打印机 $printer 共享失败，但继续..."
         done
+        
+        # 尝试更可靠的方式设置CUPS选项
+        echo "使用备用方法尝试配置CUPS..."
+        curl -s -X POST http://localhost:631/admin/?OP=config-server -d "share_printers=1" -d "remote_admin=1" -d "remote_any=1" -d "SubmitSimple=Change+Settings" >/dev/null || echo "通过Web接口配置CUPS失败"
+        
+        # 尝试低级别方式直接编辑配置文件
+        echo "ServerName localhost" >> /etc/cups/client.conf
     else
         echo "CUPS未响应HTTP请求，跳过AirPrint设置"
     fi
@@ -232,6 +262,18 @@ if [ "$CUPS_RUNNING" = true ]; then
         echo "CUPS Web界面可访问，服务正常运行"
     else
         echo "警告: CUPS Web界面不可访问，可能存在问题"
+        # 尝试重新启动CUPS
+        echo "尝试重新启动CUPS..."
+        killall -9 cupsd 2>/dev/null || true
+        sleep 2
+        /usr/sbin/cupsd -f &
+        CUPSD_PID=$!
+        sleep 5
+        if curl -s --connect-timeout 3 http://localhost:631/ > /dev/null; then
+            echo "CUPS重启后可访问"
+        else
+            echo "CUPS重启后仍不可访问，可能存在底层问题"
+        fi
     fi
 else
     echo "CUPS未运行，无法获取状态"
@@ -240,6 +282,12 @@ fi
 echo "检查Avahi状态:"
 if pgrep avahi-daemon > /dev/null; then
     echo "Avahi daemon 正在运行"
+    # 尝试安装avahi-browse工具
+    if ! command -v avahi-browse > /dev/null; then
+        echo "找不到avahi-browse命令，尝试安装..."
+        apt-get update -y && apt-get install -y --no-install-recommends avahi-utils 2>/dev/null || echo "安装avahi-utils失败，但继续..."
+    fi
+    
     # 尝试使用avahi-browse显示已发布的服务
     if command -v avahi-browse > /dev/null; then
         echo "发布的mDNS服务:"
@@ -248,12 +296,29 @@ if pgrep avahi-daemon > /dev/null; then
             echo "$AVAHI_BROWSE_OUTPUT"
         else
             echo "未检测到任何mDNS服务，可能需要等待打印机配置完成"
+            # 强制发布一个测试服务
+            if command -v avahi-publish > /dev/null; then
+                echo "尝试发布测试服务..."
+                avahi-publish -s "CUPS-Test-Service" _ipp._tcp 631 "printer=test" &
+            fi
         fi
     else
-        echo "找不到avahi-browse命令，无法列出mDNS服务"
+        echo "仍然找不到avahi-browse命令，无法列出mDNS服务"
     fi
 else
     echo "警告: Avahi daemon 未运行，AirPrint将不可用"
+    echo "尝试重新启动Avahi服务..."
+    if [ -x /usr/sbin/avahi-daemon ]; then
+        /usr/sbin/avahi-daemon -k 2>/dev/null || true
+        sleep 2
+        /usr/sbin/avahi-daemon -D
+        sleep 2
+        if pgrep avahi-daemon > /dev/null; then
+            echo "Avahi daemon 重启成功"
+        else
+            echo "Avahi daemon 重启失败"
+        fi
+    fi
 fi
 
 echo "================================================="
