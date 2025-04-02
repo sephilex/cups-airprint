@@ -5,7 +5,7 @@ PLUGIN_VERSION="3.25.2"
 PLUGIN_URL="https://www.openprinting.org/download/printdriver/auxfiles/HP/plugins/hplip-${PLUGIN_VERSION}-plugin.run"
 PLUGIN_PATH="/tmp/hplip-plugin.run"
 
-echo "准备下载并安装HPLIP插件..."
+echo "准备安装HPLIP插件..."
 
 # 清除可能存在的锁文件
 echo "清理可能存在的锁文件..."
@@ -14,29 +14,9 @@ rm -f /var/lib/hp/hplip.lock
 rm -f ~/.hplip/hplip.lock
 rm -f /tmp/hp-plugin.lock
 
-# 检查HPLIP是否正常安装
-echo "检查HPLIP安装状态..."
-hp-doctor -i || echo "hp-doctor错误，但将继续"
+echo "查看HPLIP版本信息..."
+hp-info -v || echo "hp-info命令失败，但将继续..."
 
-# 使用timeout防止命令卡住，并添加调试输出
-echo "运行hp-plugin检查插件状态..."
-if timeout 30 sh -c "hp-plugin -i" > /tmp/hp-plugin-output.txt 2>&1; then
-    cat /tmp/hp-plugin-output.txt
-    if grep -q "Plugin is installed" /tmp/hp-plugin-output.txt; then
-        echo "HPLIP插件已安装"
-        exit 0
-    else
-        echo "HPLIP插件未安装或状态不明确，继续安装..."
-    fi
-else
-    echo "hp-plugin命令超时或失败，继续安装..."
-    cat /tmp/hp-plugin-output.txt || true
-fi
-
-# 跳过插件检查，直接安装
-echo "准备直接安装HPLIP插件..."
-
-# 下载插件
 echo "下载HPLIP插件 ${PLUGIN_VERSION}..."
 if ! wget -q -O "$PLUGIN_PATH" "$PLUGIN_URL"; then
     echo "插件下载失败，尝试使用备用链接..."
@@ -56,12 +36,24 @@ EOF
 
 # 安装插件
 echo "安装HPLIP插件..."
-cat /tmp/plugin_answers.txt | sh "$PLUGIN_PATH" || { echo "HPLIP插件安装失败，但将继续..."; }
+cat /tmp/plugin_answers.txt | sh "$PLUGIN_PATH" || {
+    echo "HPLIP插件自动安装失败，请尝试手动安装:"
+    echo "sh $PLUGIN_PATH"
+    echo "插件已下载到 $PLUGIN_PATH，可以直接运行"
+    exit 1
+}
 
 echo "清理临时文件和锁文件..."
-rm -f "$PLUGIN_PATH" /tmp/plugin_answers.txt /tmp/hp-plugin-output.txt
+rm -f /tmp/plugin_answers.txt
 rm -f /var/hp-plugin.lock
 rm -f /var/lib/hp/hplip.lock
 rm -f ~/.hplip/hplip.lock
 
-echo "HPLIP插件安装完成" 
+echo "HPLIP插件安装完成"
+echo ""
+echo "下一步："
+echo "1. 检查打印机连接: lsusb | grep -i hp"
+echo "2. 查看可用打印设备: hp-probe -b usb -x"
+echo "3. 设置打印机: hp-setup -i"
+echo "4. 查看已配置的打印机: lpstat -v"
+echo "5. 启用打印机共享: lpadmin -p [打印机名称] -o printer-is-shared=true" 

@@ -7,14 +7,10 @@ rm -f /var/run/dbus/pid
 rm -f /run/dbus/pid
 rm -f /run/avahi-daemon/pid
 rm -f /var/run/avahi-daemon/pid
-
-# 清理可能存在的HPLIP锁文件
-echo "清理HPLIP锁文件..."
 rm -f /var/hp-setup.lock
 rm -f /var/hp-plugin.lock
 rm -f /var/lib/hp/hplip.lock
 rm -f ~/.hplip/hplip.lock
-rm -f /tmp/hp-setup.lock
 
 # 创建必要的目录
 mkdir -p /var/run/dbus
@@ -26,7 +22,6 @@ mkdir -p /var/run/avahi-daemon
 echo "系统环境信息..."
 uname -a
 cat /etc/os-release
-ip a
 
 # 启动dbus服务
 echo "启动dbus服务..."
@@ -110,68 +105,20 @@ CUPSD_PID=$!
 echo "等待CUPS服务启动..."
 sleep 5
 
-# 检查USB打印机
-echo "检查USB打印机..."
-lsusb | grep -i hp || echo "未检测到HP打印机，但将继续..."
+# 启用AirPrint基本设置
+echo "配置AirPrint基本设置..."
+/usr/sbin/cupsctl --share-printers
+/usr/sbin/cupsctl --remote-any
+/usr/sbin/cupsctl --remote-admin
 
-# 如果是首次运行，配置打印机
-if [ ! -f /etc/cups/printers.conf ]; then
-  echo "首次运行，配置HP CP1025打印机..."
-  
-  # 运行HPLIP插件安装脚本
-  /opt/hp/setup-hplip-plugin.sh
-  
-  # 添加10秒延迟，确保CUPS完全启动
-  sleep 10
-  
-  # 验证CUPS是否正常运行
-  echo "验证CUPS状态..."
-  lpstat -t || echo "CUPS可能未完全启动，但将继续..."
-  
-  # 清理锁文件
-  echo "再次清理锁文件，确保hp-setup可以运行..."
-  rm -f /var/hp-setup.lock
-  rm -f /var/lib/hp/hplip.lock
-  rm -f ~/.hplip/hplip.lock
-  
-  # 列出可用设备
-  echo "列出可用打印设备..."
-  hp-probe -b usb -x || echo "hp-probe失败，但将继续..."
-  
-  # 自动配置打印机（假设USB连接的是HP CP1025）
-  echo "尝试自动配置打印机..."
-  timeout 120 hp-setup -i --auto || {
-    echo "hp-setup命令超时或失败，尝试替代方法..."
-    
-    # 直接添加打印机
-    echo "尝试直接通过CUPS添加打印机..."
-    lpadmin -p CP1025 -E -v "hp:/usb/HP_Color_LaserJet_CP1025?serial=000000000000" -m "drv:///hp/hpcups.drv/hp-laserjet_cp1025-hpcups.ppd" || echo "手动添加打印机失败，请手动配置"
-  }
-  
-  # 检查打印机是否已添加
-  echo "检查打印机列表..."
-  lpstat -v
-  
-  # 启用打印机共享
-  echo "配置打印机共享..."
-  for printer in $(lpstat -v | awk -F ":" '{print $3}' | awk '{print $1}'); do
-    echo "共享打印机: $printer"
-    lpadmin -p "$printer" -o printer-is-shared=true || echo "无法共享打印机 $printer"
-  done
-  
-  # 启用AirPrint
-  echo "配置AirPrint..."
-  /usr/sbin/cupsctl --share-printers
-  /usr/sbin/cupsctl --remote-any
-  /usr/sbin/cupsctl --remote-admin
-  
-  echo "打印机配置完成"
-fi
-
-echo "CUPS服务已启动，请访问http://[容器IP]:631进行打印机配置"
-echo "如果打印机需要手动配置，请使用以下命令进入容器: docker exec -it cups-airprint bash"
-echo "然后运行: hp-setup -i"
+echo "================================================="
+echo "基础服务已启动。请按以下步骤手动配置打印机："
+echo "1. 进入容器: docker exec -it cups-airprint bash"
+echo "2. 安装HPLIP插件: /opt/hp/setup-hplip-plugin.sh"
+echo "3. 检查USB打印机: lsusb | grep -i hp"
+echo "4. 配置打印机: hp-setup -i"
+echo "5. 或访问Web界面: http://[容器IP]:631"
+echo "================================================="
 
 # 保持容器运行
-echo "容器启动完成，保持运行状态..."
 wait $CUPSD_PID || tail -f /dev/null 

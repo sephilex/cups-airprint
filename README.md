@@ -6,11 +6,10 @@
 
 - 基于Debian Bookworm的轻量级容器
 - 预装CUPS打印服务器
-- 集成HPLIP 3.25.2驱动和最新插件支持
+- 支持HPLIP 3.25.2驱动和插件
 - 支持AirPrint/Bonjour，可从iOS和macOS设备直接打印
 - USB设备直通支持
 - 持久化配置存储
-- 自动清理PID文件，解决容器重启问题
 
 ## 系统要求
 
@@ -67,14 +66,45 @@ cd cups-airprint
 docker-compose up -d
 ```
 
-4. 初始启动可能需要几分钟，因为需要下载和安装HP插件
-5. 使用以下命令查看容器日志：
+4. 容器将仅启动CUPS和Avahi服务，其他操作需要手动完成
+
+### 手动配置打印机
+
+#### 步骤1: 进入容器
 
 ```bash
-docker logs -f cups-airprint
+docker exec -it cups-airprint bash
 ```
 
-## 配置打印机
+#### 步骤2: 安装HPLIP插件
+
+```bash
+/opt/hp/setup-hplip-plugin.sh
+```
+
+#### 步骤3: 检测打印机
+
+```bash
+lsusb | grep -i hp
+hp-probe -b usb -x
+```
+
+#### 步骤4: 设置打印机
+
+```bash
+hp-setup -i
+```
+按照提示完成配置。
+
+#### 步骤5: 启用打印机共享
+
+```bash
+# 查看已配置的打印机
+lpstat -v
+
+# 启用共享（替换打印机名称）
+lpadmin -p <打印机名称> -o printer-is-shared=true
+```
 
 ### 通过Web界面配置
 
@@ -86,28 +116,55 @@ docker logs -f cups-airprint
 
 3. 导航到"Administration" > "Add Printer"
 
-4. 系统应该已经自动检测到您的HP CP1025打印机。如果没有自动检测到：
-   - 选择"Local Printers" > "HP Color LaserJet cp1025"
-   - 推荐选择 **HP LaserJet cp1025, hpcups 3.21.2, requires proprietary plugin** 驱动
-   - 按提示完成配置
+4. 选择您的HP CP1025打印机并按提示完成配置
 
 5. 确保在打印机设置中启用了"Share This Printer"选项
 
-### 通过命令行配置
+## 故障排除
 
-如果需要手动配置，可以进入容器：
+### 检查服务状态
 
 ```bash
+# 查看容器日志
+docker logs cups-airprint
+
+# 进入容器
 docker exec -it cups-airprint bash
+
+# 检查CUPS状态
+lpstat -t
+
+# 检查Avahi状态
+service avahi-daemon status
 ```
 
-然后使用HP的设置工具：
+### 常见问题
 
-```bash
-hp-setup -i
-```
+1. **插件安装失败**：
+   ```bash
+   # 手动安装插件
+   cd /tmp
+   wget https://www.openprinting.org/download/printdriver/auxfiles/HP/plugins/hplip-3.25.2-plugin.run
+   chmod +x hplip-3.25.2-plugin.run
+   sh hplip-3.25.2-plugin.run
+   ```
 
-按照提示完成配置。
+2. **打印机未被识别**：
+   ```bash
+   # 清理锁文件
+   rm -f /var/hp-setup.lock
+   rm -f /var/hp-plugin.lock
+   rm -f /var/lib/hp/hplip.lock
+   
+   # 重新尝试
+   hp-setup -i
+   ```
+
+3. **CUPS无法启动**：
+   ```bash
+   # 检查错误日志
+   cat /var/log/cups/error_log
+   ```
 
 ## 从macOS使用打印机
 
@@ -122,71 +179,10 @@ hp-setup -i
 2. 您的打印机应该自动出现在AirPrint打印机列表中
 3. 选择打印机并完成打印
 
-## 故障排除
-
-### 打印机未被发现
-
-1. 检查USB连接：
-```bash
-lsusb | grep -i hp
-```
-
-2. 检查Avahi服务是否正常运行：
-```bash
-docker exec cups-airprint service avahi-daemon status
-```
-
-3. 检查CUPS服务状态：
-```bash
-docker exec cups-airprint lpstat -t
-```
-
-### 打印问题
-
-1. 检查打印队列：
-```bash
-docker exec cups-airprint lpq
-```
-
-2. 查看CUPS日志：
-```bash
-docker exec cups-airprint tail -f /var/log/cups/error_log
-```
-
-### 容器问题
-
-1. 查看容器日志：
-```bash
-docker logs cups-airprint
-```
-
-2. 重启容器：
-```bash
-docker-compose restart
-```
-
-3. 如果容器卡在下载HPLIP插件阶段，您可以手动下载插件并复制到容器中：
-```bash
-# 在您的macOS上下载插件
-wget https://www.openprinting.org/download/printdriver/auxfiles/HP/plugins/hplip-3.25.2-plugin.run
-
-# 将插件复制到OpenWrt
-scp hplip-3.25.2-plugin.run root@<OpenWrt设备IP>:/tmp/
-
-# 将插件复制到容器
-docker cp /tmp/hplip-3.25.2-plugin.run cups-airprint:/tmp/hplip-plugin.run
-
-# 在容器内运行安装
-docker exec -it cups-airprint bash
-chmod +x /tmp/hplip-plugin.run
-sh /tmp/hplip-plugin.run
-```
-
 ## 注意事项
 
 - 网络模式设置为"host"以支持Bonjour/mDNS服务发现
 - 容器需要特权模式才能访问USB设备
-- 如果遇到权限问题，请检查USB设备权限
 - 本容器基于Debian Bookworm，使用最新的CUPS和HPLIP驱动
 
 ## 许可
