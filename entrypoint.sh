@@ -222,30 +222,80 @@ fi
 # 启用AirPrint基本设置
 echo "配置AirPrint基本设置..."
 if [ "$CUPS_RUNNING" = true ]; then
+    # 首先检查CUPS套接字是否存在并有正确权限
+    echo "检查CUPS套接字..."
+    for socket_path in "/var/run/cups/cups.sock" "/run/cups/cups.sock"; do
+        if [ -S "$socket_path" ]; then
+            echo "发现CUPS套接字: $socket_path，设置权限..."
+            chmod 777 "$socket_path" || echo "无法设置$socket_path权限"
+            ls -la "$socket_path"
+        fi
+    done
+    
     # 使用curl测试CUPS是否响应
     if curl -s --connect-timeout 3 http://localhost:631/ > /dev/null; then
-        echo "CUPS已响应，应用AirPrint设置..."
-        # 直接使用lpadmin命令替代cupsctl
-        echo "使用替代方法配置CUPS共享设置..."
+        echo "CUPS已响应HTTP请求，应用AirPrint设置..."
         
-        # 设置共享选项
-        lpadmin -o printer-is-shared=true || echo "设置默认共享选项失败"
+        # 直接修改CUPS配置文件
+        echo "直接修改CUPS配置文件..."
+        grep -q "BrowseProtocols" /etc/cups/cupsd.conf || echo "BrowseProtocols all" >> /etc/cups/cupsd.conf
+        grep -q "BrowseLocalProtocols" /etc/cups/cupsd.conf || echo "BrowseLocalProtocols dnssd" >> /etc/cups/cupsd.conf
+        grep -q "Browsing On" /etc/cups/cupsd.conf || echo "Browsing On" >> /etc/cups/cupsd.conf
+        
+        # 重启CUPS使配置生效
+        echo "重启CUPS使新配置生效..."
+        killall -9 cupsd 2>/dev/null || true
+        sleep 2
+        /usr/sbin/cupsd
+        sleep 3
+        
+        # 设置共享选项（不使用cupsctl）
+        echo "设置打印机共享选项..."
         
         # 为所有打印机启用共享
         echo "确保所有打印机都启用了共享..."
-        lpstat -v 2>/dev/null | awk -F ":" '{print $1}' | awk '{print $NF}' | while read printer; do
-            echo "设置打印机 $printer 为共享..."
-            lpadmin -p "$printer" -o printer-is-shared=true || echo "设置打印机 $printer 共享失败，但继续..."
-        done
+        if lpstat -v 2>/dev/null; then
+            lpstat -v 2>/dev/null | awk -F ":" '{print $1}' | awk '{print $NF}' | while read printer; do
+                echo "设置打印机 $printer 为共享..."
+                lpadmin -p "$printer" -o printer-is-shared=true || echo "设置打印机 $printer 共享失败，但继续..."
+            done
+        else
+            echo "没有发现已配置的打印机，稍后可能需要手动配置"
+        fi
         
         # 尝试更可靠的方式设置CUPS选项
-        echo "使用备用方法尝试配置CUPS..."
-        curl -s -X POST http://localhost:631/admin/?OP=config-server -d "share_printers=1" -d "remote_admin=1" -d "remote_any=1" -d "SubmitSimple=Change+Settings" >/dev/null || echo "通过Web接口配置CUPS失败"
+        echo "使用备用方法配置CUPS共享选项..."
+        curl -s -X POST "http://localhost:631/admin/?OP=config-server" \
+            -d "share_printers=1" \
+            -d "remote_admin=1" \
+            -d "remote_any=1" \
+            -d "user_cancel_any=1" \
+            -d "preserve_job_history=1" \
+            -d "preserve_job_files=1" \
+            -d "SubmitSimple=Change+Settings" >/dev/null || echo "通过Web接口配置CUPS失败"
         
-        # 尝试低级别方式直接编辑配置文件
+        # 创建或更新客户端配置
+        echo "# CUPS客户端配置" > /etc/cups/client.conf
         echo "ServerName localhost" >> /etc/cups/client.conf
+        
+        echo "AirPrint基本设置完成。"
     else
-        echo "CUPS未响应HTTP请求，跳过AirPrint设置"
+        echo "CUPS未响应HTTP请求，使用备用配置方法..."
+        
+        # 备用配置方法 - 直接编辑配置
+        echo "备用方法: 直接编辑CUPS配置..."
+        
+        # 检查CUPS是否在运行，如果没有则重新启动
+        if ! pgrep cupsd > /dev/null; then
+            echo "CUPS未运行，尝试重新启动..."
+            /usr/sbin/cupsd -f &
+            CUPSD_PID=$!
+            sleep 5
+        fi
+        
+        # 配置环境变量，避免连接错误
+        export CUPS_SERVER=localhost
+        export IPP_PORT=631
     fi
 else
     echo "CUPS未运行，跳过AirPrint设置"
@@ -282,10 +332,88 @@ fi
 echo "检查Avahi状态:"
 if pgrep avahi-daemon > /dev/null; then
     echo "Avahi daemon 正在运行"
+    
+    # 确保Avahi配置正确
+    echo "检查Avahi配置..."
+    if [ -f /etc/avahi/avahi-daemon.conf ]; then
+        # 备份原始配置
+        cp /etc/avahi/avahi-daemon.conf /etc/avahi/avahi-daemon.conf.bak
+        
+        # 修改配置以支持CUPS打印机发现
+        echo "配置Avahi以支持CUPS打印机发现..."
+        cat > /etc/avahi/avahi-daemon.conf << EOF
+[server]
+#host-name=iStoreOS
+domain-name=local
+use-ipv4=yes
+use-ipv6=yes
+enable-dbus=yes
+#disallow-other-stacks=no
+allow-point-to-point=yes
+#publish-aaaa-on-ipv4=yes
+#publish-a-on-ipv6=yes
+
+[wide-area]
+enable-wide-area=yes
+
+[publish]
+#disable-publishing=no
+#disable-user-service-publishing=no
+#add-service-cookie=no
+publish-addresses=yes
+publish-hinfo=yes
+publish-workstation=yes
+publish-domain=yes
+#publish-dns-servers=192.168.1.1
+#publish-resolv-conf-dns-servers=yes
+publish-aaaa-on-ipv4=yes
+publish-a-on-ipv6=yes
+
+[reflector]
+#enable-reflector=no
+#reflect-ipv=no
+
+[rlimits]
+#rlimit-as=
+rlimit-core=0
+rlimit-data=4194304
+rlimit-fsize=0
+rlimit-nofile=768
+rlimit-stack=4194304
+rlimit-nproc=3
+EOF
+        
+        # 重启Avahi使新配置生效
+        echo "重启Avahi服务..."
+        /usr/sbin/avahi-daemon -k 2>/dev/null || true
+        sleep 2
+        /usr/sbin/avahi-daemon -D
+        sleep 2
+    else
+        echo "未找到Avahi配置文件，使用默认设置"
+    fi
+    
     # 尝试安装avahi-browse工具
     if ! command -v avahi-browse > /dev/null; then
         echo "找不到avahi-browse命令，尝试安装..."
         apt-get update -y && apt-get install -y --no-install-recommends avahi-utils 2>/dev/null || echo "安装avahi-utils失败，但继续..."
+    fi
+    
+    # 确保CUPS与Avahi集成
+    echo "确保CUPS与Avahi集成..."
+    
+    # 检查cups-browsed服务
+    if command -v cups-browsed > /dev/null; then
+        echo "启动cups-browsed服务..."
+        cups-browsed || echo "cups-browsed启动失败，但继续..."
+    else
+        echo "未找到cups-browsed，尝试安装..."
+        apt-get update -y && apt-get install -y --no-install-recommends cups-browsed 2>/dev/null || echo "安装cups-browsed失败，但继续..."
+        
+        if command -v cups-browsed > /dev/null; then
+            echo "启动cups-browsed服务..."
+            cups-browsed || echo "cups-browsed启动失败，但继续..."
+        fi
     fi
     
     # 尝试使用avahi-browse显示已发布的服务
@@ -300,6 +428,15 @@ if pgrep avahi-daemon > /dev/null; then
             if command -v avahi-publish > /dev/null; then
                 echo "尝试发布测试服务..."
                 avahi-publish -s "CUPS-Test-Service" _ipp._tcp 631 "printer=test" &
+                
+                # 检查是否有任何打印机，并手动创建DNS-SD服务
+                if lpstat -v 2>/dev/null | grep -q printer; then
+                    echo "发现打印机，手动发布Bonjour服务..."
+                    lpstat -v | awk -F ":" '{print $1}' | awk '{print $NF}' | while read printer; do
+                        echo "为打印机 $printer 发布Bonjour服务..."
+                        avahi-publish -s "$printer" _ipp._tcp 631 "printer=$printer" "pdl=application/postscript" "note=AirPrint" &
+                    done
+                fi
             fi
         fi
     else
