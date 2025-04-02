@@ -7,11 +7,27 @@ PLUGIN_PATH="/tmp/hplip-plugin.run"
 
 echo "准备下载并安装HPLIP插件..."
 
-# 检查插件是否已安装
-if hp-plugin -i 2>&1 | grep -q "Plugin is installed"; then
-    echo "HPLIP插件已安装"
-    exit 0
+# 检查HPLIP是否正常安装
+echo "检查HPLIP安装状态..."
+hp-doctor -i || echo "hp-doctor错误，但将继续"
+
+# 使用timeout防止命令卡住，并添加调试输出
+echo "运行hp-plugin检查插件状态..."
+if timeout 30 sh -c "hp-plugin -i" > /tmp/hp-plugin-output.txt 2>&1; then
+    cat /tmp/hp-plugin-output.txt
+    if grep -q "Plugin is installed" /tmp/hp-plugin-output.txt; then
+        echo "HPLIP插件已安装"
+        exit 0
+    else
+        echo "HPLIP插件未安装或状态不明确，继续安装..."
+    fi
+else
+    echo "hp-plugin命令超时或失败，继续安装..."
+    cat /tmp/hp-plugin-output.txt || true
 fi
+
+# 跳过插件检查，直接安装
+echo "准备直接安装HPLIP插件..."
 
 # 下载插件
 echo "下载HPLIP插件 ${PLUGIN_VERSION}..."
@@ -36,6 +52,6 @@ echo "安装HPLIP插件..."
 cat /tmp/plugin_answers.txt | sh "$PLUGIN_PATH" || { echo "HPLIP插件安装失败，但将继续..."; }
 
 echo "清理临时文件..."
-rm -f "$PLUGIN_PATH" /tmp/plugin_answers.txt
+rm -f "$PLUGIN_PATH" /tmp/plugin_answers.txt /tmp/hp-plugin-output.txt
 
 echo "HPLIP插件安装完成" 
