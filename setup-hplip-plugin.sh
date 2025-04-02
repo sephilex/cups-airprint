@@ -58,18 +58,110 @@ export PLUGIN_INSTALL=1
 
 echo "尝试使用官方安装脚本..."
 # 检查是否存在官方安装脚本
-if [ -f "$TEMP_DIR/plugin_install.py" ]; then
-    echo "找到官方安装脚本，执行插件安装..."
+if [ -f "$TEMP_DIR/plugin_install.py" ] || [ -f "$TEMP_DIR/installPlugin.py" ]; then
+    echo "找到官方安装脚本，尝试执行插件安装..."
     cd "$TEMP_DIR"
-    python3 plugin_install.py || python plugin_install.py
+    
+    # 设置无头模式环境变量，强制使用非图形界面
+    export QT_QPA_PLATFORM=offscreen
+    export DISPLAY=""
+    
+    # 尝试直接安装方法
+    echo "尝试直接安装方法..."
+    python3 -c "
+import os, glob
+import shutil
+import sys
+
+# 获取系统架构
+import platform
+arch = platform.machine()
+plugin_dir = 'x86_64'
+
+if arch == 'x86_64':
+    plugin_dir = 'x86_64'
+elif arch == 'aarch64':
+    plugin_dir = 'aarch64'
+elif arch.startswith('arm'):
+    plugin_dir = 'arm'
+    if arch == 'armv7l':
+        plugin_dir = 'arm32'
+elif arch in ['i686', 'i386']:
+    plugin_dir = 'x86_32'
+
+print(f'系统架构: {arch}, 使用插件目录: {plugin_dir}')
+
+# 创建目标目录
+os.makedirs('/usr/share/hplip/data/firmware', exist_ok=True)
+os.makedirs('/usr/share/hplip/data/plugins', exist_ok=True)
+os.makedirs('/usr/share/hplip/prnt/plugins', exist_ok=True)
+
+# 安装固件
+for fw in glob.glob('*.fw.gz'):
+    try:
+        print(f'安装固件: {fw}')
+        shutil.copy(fw, '/usr/share/hplip/data/firmware/')
+    except Exception as e:
+        print(f'复制固件文件失败: {e}')
+
+# 尝试安装架构特定的插件
+plugin_installed = False
+for plugin in glob.glob(f'*-{plugin_dir}.so'):
+    try:
+        print(f'安装插件: {plugin}')
+        shutil.copy(plugin, '/usr/share/hplip/prnt/plugins/')
+        plugin_installed = True
+    except Exception as e:
+        print(f'复制插件文件失败: {e}')
+
+# 如果没有找到架构特定的插件，尝试任何可能的匹配
+if not plugin_installed:
+    print('未找到架构特定插件，尝试其他架构...')
+    for arch_pattern in ['arm', 'arm32', 'arm64', 'x86_32', 'x86_64']:
+        for plugin in glob.glob(f'*-{arch_pattern}.so'):
+            try:
+                print(f'安装备选插件: {plugin}')
+                shutil.copy(plugin, '/usr/share/hplip/prnt/plugins/')
+                plugin_installed = True
+            except Exception as e:
+                print(f'复制备选插件文件失败: {e}')
+
+# 修改权限
+for dir_path in ['/usr/share/hplip/data/firmware', '/usr/share/hplip/data/plugins', '/usr/share/hplip/prnt/plugins']:
+    os.system(f'chmod -R 755 {dir_path}')
+
+if plugin_installed:
+    print('HPLIP插件文件安装成功')
+    sys.exit(0)
+else:
+    print('警告: 未能安装任何插件文件')
+    sys.exit(1)
+" || echo "直接安装方法失败"
     
     # 检查安装结果
     if [ $? -eq 0 ]; then
-        echo "官方安装脚本执行成功！"
+        echo "插件安装成功！"
         echo "HPLIP插件安装完成"
     else
-        echo "官方安装脚本执行失败，将尝试手动安装方式..."
-        # 继续执行手动安装流程
+        echo "直接安装失败，尝试原始方法..."
+        
+        # 尝试使用不同方法运行安装脚本
+        if [ -f "$TEMP_DIR/installPlugin.py" ]; then
+            echo "使用installPlugin.py安装..."
+            python3 installPlugin.py -n 2>/dev/null || python installPlugin.py -n 2>/dev/null
+        else
+            echo "使用plugin_install.py安装..."
+            python3 plugin_install.py -n 2>/dev/null || python plugin_install.py -n 2>/dev/null
+        fi
+        
+        # 检查安装结果
+        if [ $? -eq 0 ]; then
+            echo "官方安装脚本执行成功！"
+            echo "HPLIP插件安装完成"
+        else
+            echo "官方安装脚本执行失败，将尝试手动安装方式..."
+            # 继续执行手动安装流程
+        fi
     fi
 else
     echo "未找到官方安装脚本，将使用手动安装方式..."
